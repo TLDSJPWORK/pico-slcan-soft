@@ -45,8 +45,8 @@ bool (*can_speedchange_custom_func)(uint8_t, uint8_t, uint8_t, uint8_t, uint8_t,
  * English: If true, use an extended CAN ID (29-bit).
  *
  * @return
- * 日本語: 送信成功ならtrue、失敗ならfalse
- * English: Returns true if the message was sent successfully, false otherwise.
+ * 日本語: TX FIFOへの受付成功ならtrue、満杯または受付不可ならfalse
+ * English: Returns true on TX FIFO acceptance, false when full or unavailable.
  *
  * @note
  * 日本語: この関数はCANコントローラが初期化済みである必要があります。
@@ -211,9 +211,12 @@ bool pars_slcancmd_speedchange_custom(char *buf) {
 
 //----------------------------------------------------------------
 
+extern void pico_slcan_tx_buffer_status(void);
+
 void pars_slcancmd(char *buf)
 {                           // LAWICEL PROTOCOL
   switch (buf[0]) {
+    case 'w': pico_slcan_tx_buffer_status(); break;
     case 'O':               // OPEN CAN
       working=true;
       if (can_init_func) {
@@ -230,53 +233,61 @@ void pars_slcancmd(char *buf)
       break;
     case 't':               // SEND STD FRAME
       // send_canmsg(buf,false,false);
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,false); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,false)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'T':               // SEND EXT FRAME
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,true); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,true)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'r':               // SEND STD RTR FRAME
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,true,false); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,true,false)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'R':               // SEND EXT RTR FRAME
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,true,true); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,true,true)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'd':               // SEND NORMAL FD FRAME
       // send_canmsg(buf,false,false);
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,false); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,false)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'D':               // SEND EXT FD FRAME
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,true); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,true)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'b':               // SEND NORMAL FD FRAME with BRS
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,false); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,false)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'B':               // SEND EXT FD FRAME with BRS
-      if (send_canmsg_func && working) {
-          send_canmsg_func(buf,false,true); // 登録された関数を呼び出す
+      if (send_canmsg_func && working && send_canmsg_func(buf,false,true)) {
+          slcan_ack(); // Accepted into the TX queue, not yet transmitted on the bus.
+      } else {
+          slcan_nack();
       }
-      slcan_ack();
       break;
     case 'Z':               // ENABLE TIMESTAMPS
       switch (buf[1]) {
@@ -587,25 +598,27 @@ void TIME_CRITICAL transfer_can2tty()
 
               // FDフレーム判定
               bool is_fd = (rx_frame.flags & CAN_FRAME_FLAG_FDF) != 0;
+              bool is_ext = can_id_is_extended(rx_frame.canid);
+              uint32_t arbitration_id = rx_frame.canid.id & CAN_ID_ARBITRATION_ID;
               bool is_rtr = (rx_frame.flags & CAN_FRAME_FLAG_RTR) != 0;
               bool is_brs = (rx_frame.flags & CAN_FRAME_FLAG_BRS) != 0;
               bool is_esi = (rx_frame.flags & CAN_FRAME_FLAG_ESI) != 0;
 
               // コマンド文字
               if (is_fd) {
-                  command[idx++] = (rx_frame.canid.id > 0x7FF) ? (is_brs ? 'B' : 'D') : (is_brs ? 'b' : 'd');
+                  command[idx++] = (is_ext) ? (is_brs ? 'B' : 'D') : (is_brs ? 'b' : 'd');
               } else {
-                  command[idx++] = (rx_frame.canid.id > 0x7FF) ? (is_rtr ? 'R' : 'T') : (is_rtr ? 'r' : 't');
+                  command[idx++] = (is_ext) ? (is_rtr ? 'R' : 'T') : (is_rtr ? 'r' : 't');
               }
 
               // ID追加
-              if (rx_frame.canid.id > 0x7FF) {
+              if (is_ext) {
                   for (int shift = 28; shift >= 0; shift -= 4) {
-                      command[idx++] = HEXVAL[(rx_frame.canid.id >> shift) & 0xF];
+                      command[idx++] = HEXVAL[(arbitration_id >> shift) & 0xF];
                   }
               } else {
                   for (int shift = 8; shift >= 0; shift -= 4) {
-                      command[idx++] = HEXVAL[(rx_frame.canid.id >> shift) & 0xF];
+                      command[idx++] = HEXVAL[(arbitration_id >> shift) & 0xF];
                   }
               }
 

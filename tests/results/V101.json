@@ -1,0 +1,83 @@
+{
+  "release": "V101",
+  "tested_date": "2026-10-18",
+  "firmware_sha256": "865fb5b90f5c52ddfb8b42c56254333457d55e8ca526c154c98bcd955a639852",
+  "firmware_bytes": 117248,
+  "software_byte": "02",
+  "tx_capacity": 1000,
+  "fifo_bytes": 76000,
+  "static_ram_end_offset": 111996,
+  "environment": {
+    "dut": "RP2040 pico-slcan / MCP251xFD",
+    "peer": "Raspberry Pi / MCP2518FD",
+    "spi_hz": 5000000,
+    "rx_matrix_nominal_bitrate": 500000,
+    "fd_data_bitrate": 2000000,
+    "peer_nominal_sample_point": 0.8,
+    "peer_data_sample_point": 0.8,
+    "peer_nominal_sjw": 8,
+    "peer_data_sjw": 2
+  },
+  "rx_matrix": {
+    "pass": true,
+    "cases": 52,
+    "received": 52,
+    "content_and_order_match": true
+  },
+  "duplex": {
+    "pass": true,
+    "pico_to_peer": 1000,
+    "peer_to_pico": 1000,
+    "success_responses": 1000,
+    "pico_to_peer_order": true,
+    "peer_to_pico_order": true
+  },
+  "burst_full_ack_restore": [
+    {
+      "phase": "noack",
+      "sent": 1100,
+      "received_before_ack_resume": 0,
+      "success_responses": 1000,
+      "error_responses": 100,
+      "ordered": true,
+      "queued_after": 1000,
+      "received_after_ack_resume": 1000
+    },
+    {
+      "phase": "burst1000",
+      "sent": 1000,
+      "received_before_ack_resume": 1000,
+      "success_responses": 1000,
+      "error_responses": 0,
+      "ordered": true,
+      "queued_after": 0,
+      "received_after_ack_resume": 0
+    },
+    {
+      "phase": "baseline",
+      "sent": 20,
+      "received_before_ack_resume": 20,
+      "success_responses": 20,
+      "error_responses": 0,
+      "ordered": true,
+      "queued_after": 0,
+      "received_after_ack_resume": 0
+    },
+    {
+      "phase": "recovery",
+      "sent": 20,
+      "received_before_ack_resume": 20,
+      "success_responses": 20,
+      "error_responses": 0,
+      "ordered": true,
+      "queued_after": 0,
+      "received_after_ack_resume": 0
+    }
+  ],
+  "limits": [
+    "125k/2M DLC0 BRS transmission remained pending in an initial trial; root cause unresolved; qualified BRS condition is 500k/2M",
+    "No long-duration soak or forced SEQ/TEF faults",
+    "Bus-off automatic recovery unqualified",
+    "No maximum throughput or latency bound measured"
+  ]
+}

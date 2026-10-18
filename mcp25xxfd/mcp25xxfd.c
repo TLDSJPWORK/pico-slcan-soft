@@ -721,7 +721,7 @@ static bool TIME_CRITICAL set_controller_mode(can_interface_t *spi_interface,
         // FSIZE Defaults to 6-deep for CAN FD, 32-deep for CAN
         // RXTSEN Timestamp receptions
         // TFNRFNIE interrupts enabled
-        write_word(spi_interface, C1FIFOCON1, PLSIZE(7U) | FSIZE(CAN_HW_RX_FIFO_SIZE) | RXTSEN | TFNRFNIE);
+        write_word(spi_interface, C1FIFOCON1, PLSIZE(7U) | FSIZE(CAN_HW_RX_FIFO_SIZE - 1U) | RXTSEN | TFNRFNIE);
 
         // Enable the interrupts, don't dismiss any pending ones
         enable_controller_interrupts(spi_interface, 0);
@@ -920,7 +920,7 @@ static void TIME_CRITICAL init_tx_buffers(can_controller_t *controller)
     controller->tx_fifo.num_free_slots = CAN_TX_FIFO_SIZE;
 
     // Ensure there are no references to any CANFrame instances
-    for (uint32_t i = 0; i < CAN_HW_TX_QUEUE_SIZE; i++) {
+    for (uint32_t i = 0; i < UREF_HASH_TABLE_SIZE; i++) {
         controller->tx_pri_queue.uref[i] = can_uref_null;
         controller->tx_pri_queue.uref_valid[i] = false;
     }
@@ -1153,7 +1153,7 @@ static void TIME_CRITICAL rx_handler(can_controller_t *controller)
     //--- Write identifier: if an extended frame is sent, identifier bits sould be reordered (see DS20006027B, page 27)
     canid.id = arbitration_id | (!!ide << CAN_ID_EXT_BIT);
     if (ide) {
-        canid.id = ((arbitration_id >> 11U) & 0x3FFFFU) | ((arbitration_id & 0x7FF) << 18U);
+        canid.id = ((arbitration_id >> 11U) & 0x3FFFFU) | ((arbitration_id & 0x7FF) << 18U) | (1U << CAN_ID_EXT_BIT);
     }
 
     uint8_t dlc = r[1] & 0xfU;

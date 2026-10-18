@@ -8,10 +8,61 @@
 #include "pico-slcan.h"
 
 static can_controller_t mController;
+static critical_section_t can_rx_lock;
 can_bitrate_t mBitrate;
 can_errorcode_t mRc;
 bool mIrq_registerd = false;
 bool mController_started = false;
+
+// Core0 owns the FIFO. The CAN ISR only publishes completed transmissions.
+#define SLCAN_TX_BUFFER_SIZE 1000U
+static can_frame_t tx_buffer[SLCAN_TX_BUFFER_SIZE];
+static uint32_t tx_head, tx_tail, tx_count;
+static bool tx_inflight;
+static volatile uint32_t tx_completed;
+static uint32_t tx_submit_completed;
+static uint32_t tx_accepted, tx_rejected, tx_high_water, tx_retries;
+
+void TIME_CRITICAL can_isr_callback_frame_tx(can_uref_t uref, uint32_t timestamp) {
+    (void)uref;
+    (void)timestamp;
+    tx_completed++;
+}
+
+static void tx_buffer_clear(void) {
+    tx_head = tx_tail = tx_count = 0;
+    tx_inflight = false;
+}
+
+// Keep the head until its completion event. One hardware frame at a time also
+// prevents the hardware priority queue from reordering equal-ID FIFO frames.
+static void TIME_CRITICAL pico_slcan_tx_service(void) {
+    if (!mController_started) return;
+    if (tx_inflight) {
+        if (tx_completed == tx_submit_completed) return;
+        if (++tx_head == SLCAN_TX_BUFFER_SIZE) tx_head = 0;
+        tx_count--;
+        tx_inflight = false;
+    }
+    if (tx_count == 0) return;
+    tx_submit_completed = tx_completed;
+    can_errorcode_t rc = can_send_frame(&mController, &tx_buffer[tx_head], false);
+    if (rc == CAN_ERC_NO_ERROR) {
+        tx_inflight = true;
+    } else {
+        // Retain the head and retry from the foreground loop, never from ISR.
+        tx_retries++;
+    }
+}
+
+// Status extension; counts include the in-flight head.
+void pico_slcan_tx_buffer_status(void) {
+    pico_slcan_tx_service();
+    printf("W accepted=%lu rejected=%lu completed=%lu queued=%lu capacity=%u high_water=%lu retries=%lu inflight=%u\r",
+        (unsigned long)tx_accepted, (unsigned long)tx_rejected,
+        (unsigned long)tx_completed, (unsigned long)tx_count, SLCAN_TX_BUFFER_SIZE,
+        (unsigned long)tx_high_water, (unsigned long)tx_retries, tx_inflight ? 1U : 0U);
+}
 
 ssd1306_t mDisp;
 
@@ -50,7 +101,9 @@ void pico_slcan_can_init(void) {
                 break;
             }
         }
+        critical_section_enter_blocking(&can_rx_lock);
         mController_started = true;
+        critical_section_exit(&can_rx_lock);
     }
     pico_slcan_oled_update();
 }
@@ -58,9 +111,12 @@ void pico_slcan_can_init(void) {
 void pico_slcan_can_stop(void) {
     if(mController_started) {
         irq_set_enabled(IO_IRQ_BANK0, false);
-        can_stop_controller(&mController);
+        critical_section_enter_blocking(&can_rx_lock);
         mController_started = false;
+        can_stop_controller(&mController);
+        critical_section_exit(&can_rx_lock);
     }
+    tx_buffer_clear();
     pico_slcan_oled_update();
 }
 
@@ -247,6 +303,12 @@ bool pico_slcan_can_speedchange_custom(uint8_t nbrp, uint8_t ntseg1, uint8_t nts
 }
 
 bool TIME_CRITICAL pico_slcan_send_canmsg(char *msg, bool rtr, bool ext) {
+    if (!msg || !mController_started) return false;
+    pico_slcan_tx_service();
+    if (tx_count == SLCAN_TX_BUFFER_SIZE) {
+        tx_rejected++;
+        return false;
+    }
     led_on();
 
     can_frame_t tx_frame;
@@ -344,23 +406,23 @@ bool TIME_CRITICAL pico_slcan_send_canmsg(char *msg, bool rtr, bool ext) {
             return false; // 未対応コマンド
         }
 
-    // Send our frame
-    mRc = can_send_frame(&mController, &tx_frame, false);
-    if (mRc != CAN_ERC_NO_ERROR) {
-        // This can happen if there is no room in the transmit queue, which can
-        // happen if the CAN mController is connected to a CAN bus but there are no
-        // other CAN controllers connected and able to ACK a CAN frame, so the
-        // transmit queue fills up and then cannot accept any more frames.
-        //printf("CAN send error: %d, sent=%d\n", mRc, queued_ok);
-    }
-
+    tx_buffer[tx_tail] = tx_frame;
+    if (++tx_tail == SLCAN_TX_BUFFER_SIZE) tx_tail = 0;
+    tx_count++;
+    tx_accepted++;
+    if (tx_count > tx_high_water) tx_high_water = tx_count;
+    pico_slcan_tx_service();
     led_off();
+    return true; // Accepted into the FIFO; completion is asynchronous.
 } // send_canmsg()
 
 bool TIME_CRITICAL pico_slcan_recv_canmsg(can_frame_t *frame) {
     can_rx_event_t rx_event;
     can_rx_event_t *e = &rx_event;
-    if (can_recv(&mController, e) && can_event_is_frame(e)) {
+    critical_section_enter_blocking(&can_rx_lock);
+    bool received = mController_started && can_recv(&mController, e);
+    critical_section_exit(&can_rx_lock);
+    if (received && can_event_is_frame(e)) {
         led_on();
 
         can_frame_t *f = can_event_get_frame(e);
@@ -377,9 +439,7 @@ bool TIME_CRITICAL pico_slcan_recv_canmsg(can_frame_t *frame) {
 
         // DLCに基づくデータコピー
         uint8_t len = (f->dlc < 16) ? dlc_to_len[f->dlc] : 0;
-        for (int i = 0; i < len; i++) {
-            frame->fd_data[i] = f->fd_data[i];
-        }
+        memcpy(frame->fd_data, f->fd_data, len);
 
         led_off();
         return true;
@@ -622,7 +682,9 @@ void TIME_CRITICAL irq_handler(void)
     uint32_t events = gpio_get_irq_event_mask(spi_irq); 
 
     if (events & GPIO_IRQ_LEVEL_LOW) {
+        critical_section_enter_blocking(&can_rx_lock);
         mcp25xxfd_irq_handler(&mController);
+        critical_section_exit(&can_rx_lock);
     }
 }
 
@@ -707,6 +769,7 @@ const char* get_label(uint32_t value, RateMap *map, size_t map_size) {
 //----------------------------------------------------------------
 
 void setup() {
+    critical_section_init(&can_rx_lock);
     stdio_init_all();
     led_init();
     oled_gpios_setup();
@@ -752,7 +815,9 @@ void setup() {
 }
 
 void TIME_CRITICAL loop_core0() {
+    pico_slcan_tx_service();
     transfer_tty2can();
+    pico_slcan_tx_service();
 }
 
 void TIME_CRITICAL loop_core1() {

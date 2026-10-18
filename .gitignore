@@ -1,2 +1,7 @@
 /build/
 /.vscode/
+/build/
+__pycache__/
+*.pyc
+
+/output/
