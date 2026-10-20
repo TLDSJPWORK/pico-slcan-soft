@@ -22,7 +22,7 @@
 #include "pico-ssd1306/ssd1306.h"
 #include "slcan/slcan.h"
 
-#define SOFTWARE_VERSION 0x02
+#define SOFTWARE_VERSION 0x03
 #define SLEEPTIME 25
 #define NUM_PINS 8
 

@@ -540,6 +540,7 @@ CONST_STORAGE uint16_t can_fd_dlc_to_size[] = {
 // #define             TXATIE          (1U << 5)
 #define         C1TXQSTA        (0x054U)
 #define             TXQNIF          (1U << 0)
+#define             TXQEIF          (1U << 2)
 #define         C1TXQUA         (0x058U)
 #define         C1FIFOCON1      (0x05cU)
 #define             RXTSEN          (1U << 5)
@@ -619,7 +620,7 @@ static void TIME_CRITICAL set_controller_pins(can_interface_t *spi_interface, bo
 // This is called after the mode change to normal has occurred so that there won't be a interrupt
 // coming from configuration to normal mode (which would be confused with a bus-off interrupt).
 // The dismiss parameter indicates which interrupts should be dismissed.
-static void TIME_CRITICAL enable_controller_interrupts(can_interface_t *spi_interface, uint16_t dismiss)
+static void TIME_CRITICAL enable_controller_interrupts(can_interface_t *spi_interface, uint16_t dismiss, bool tx_enabled)
 {
     // Enable interrupts
     // IVMIE -  CAN error
@@ -636,7 +637,7 @@ static void TIME_CRITICAL enable_controller_interrupts(can_interface_t *spi_inte
     //
     // The RXIF and TEFIF flags are cleared by dismissing the source (i.e. removing items
     // from the queue)
-    uint32_t enable = IVMIE | CERRIE | RXIE | TEFIE;
+    uint32_t enable = IVMIE | CERRIE | RXIE | (tx_enabled ? TEFIE : 0U);
     uint16_t dismiss_mask = ~dismiss;
     write_word(spi_interface, C1INT, enable | dismiss_mask);
 }
@@ -710,7 +711,7 @@ static bool TIME_CRITICAL set_controller_mode(can_interface_t *spi_interface,
         // FSIZE Defaults to 12-deep (CAN FD) or 32-deep (CAN) event queue
         // TEFTSEN Timestamp transmissions
         // TEFNEIIE not empty interrupt enable
-        write_word(spi_interface, C1TEFCON, FSIZE(CAN_HW_TEF_QUEUE_SIZE - 1U) | TEFTSEN | TEFNEIE);
+        write_word(spi_interface, C1TEFCON, FSIZE(CAN_HW_TEF_QUEUE_SIZE - 1U) | TEFTSEN | TEFNEIE | TEFOVIE);
 
         // Transmit queue control register
         // FSIZE (Defaults to 32-deep for CAN-only, 20-deep for CAN + CAN FD)
@@ -724,7 +725,7 @@ static bool TIME_CRITICAL set_controller_mode(can_interface_t *spi_interface,
         write_word(spi_interface, C1FIFOCON1, PLSIZE(7U) | FSIZE(CAN_HW_RX_FIFO_SIZE - 1U) | RXTSEN | TFNRFNIE);
 
         // Enable the interrupts, don't dismiss any pending ones
-        enable_controller_interrupts(spi_interface, 0);
+        enable_controller_interrupts(spi_interface, 0, true);
 
         // Enable transmit queue, store in transmit event FIFO, CAN 2.0 mode
         // Select mode
@@ -767,6 +768,12 @@ static bool TIME_CRITICAL set_controller_mode(can_interface_t *spi_interface,
     return false;
 }
 
+static void tx_fault(can_controller_t *controller, uint32_t reason)
+{
+    if (!controller->target_specific.tx_faults) controller->target_specific.tx_recovery_phase = 0;
+    controller->target_specific.tx_faults |= reason;
+}
+
 // This is the main function for transmitting a frame
 // Returns false if no room (used for various calls)
 // Errata: C1TXQSTA read can be corrupted
@@ -776,6 +783,8 @@ static bool TIME_CRITICAL send_frame(can_controller_t *controller, const can_fra
     // This function may be called from an ISR
 
     can_interface_t *spi_interface = &controller->host_interface;
+
+    if (controller->target_specific.tx_faults) return false;
 
     if (!fifo || controller->tx_pri_queue.fifo_hash_valid) {
         // Put the frame in the priority transmit queue
@@ -794,6 +803,7 @@ static bool TIME_CRITICAL send_frame(can_controller_t *controller, const can_fra
                 // Queue full, can't write to it, should not have happened because now inconsistent with
                 // software counters
                 controller->target_specific.txqsta_bad++;
+                tx_fault(controller, CAN_TX_FAULT_STATE);
                 // debug_printf("no room 2\n"); // TODO remove
 
                 return false;
@@ -822,6 +832,7 @@ static bool TIME_CRITICAL send_frame(can_controller_t *controller, const can_fra
             ////// Error checking: should not happen if the hardware is behaving correctly
             if (free_slot_hash > TXQ_LARGEST_HASH_VALUE) {
                 controller->target_specific.txqua_bad++;
+                tx_fault(controller, CAN_TX_FAULT_STATE);
                 // debug_printf("no room 3\n"); // TODO remove
                 return false;
             }
@@ -960,6 +971,7 @@ static void TIME_CRITICAL tx_handler(can_controller_t *controller)
         // space. But the CRC-protected read should not permit this to fail (it returns 0xffffffffU
         // if the retries all failed, and this will cause the SEQ range check to fail)
         controller->target_specific.seq_bad++;
+        tx_fault(controller, CAN_TX_FAULT_SEQ);
     }
     else {
         uint32_t timestamp = details[1];
@@ -1039,7 +1051,7 @@ static void TIME_CRITICAL tx_handler(can_controller_t *controller)
     // MCP251xFD interrupts are level-sensitive so GPIO must be set to level sensitive; interrupt
     // will be re-raised if still not empty when serviced.
     // Set FSIZE, UINC, TEFTSEN, TEFNEIE
-    write_word(spi_interface, C1TEFCON, FSIZE(0x1fU) | UINC | TEFTSEN | TEFNEIE);
+    write_word(spi_interface, C1TEFCON, FSIZE(CAN_HW_TEF_QUEUE_SIZE - 1U) | UINC | TEFTSEN | TEFNEIE | TEFOVIE);
 }
 
 // Errata: C1TREC read can be corrupted
@@ -1050,14 +1062,15 @@ static void TIME_CRITICAL bus_off_handler(can_controller_t *controller)
     // Frames should not be accepted for transmission if not yet in normal mode.
     uint32_t c1trec = read_word_crc(spi_interface, C1TREC);
 
-    if (c1trec & TXBO) {
+    if (c1trec != 0xffffffffU && (c1trec & TXBO)) {
         // Bus-off will erase the transmit queues, so all the frames we queued are now going to be
         // thrown away, so discard them in the software queues too
         // Record that this happened
         controller->target_specific.bus_off++;
 
-        // Discard all the pending frames
-        init_tx_buffers(controller);
+        // Defer hardware/software TX resynchronization to the foreground.
+        // The application must retain its head: there will be no completion.
+        tx_fault(controller, CAN_TX_FAULT_BUS_OFF);
     }
     // This could be warning about error passive and other states, but we don't care about those
 }
@@ -1475,14 +1488,18 @@ void TIME_CRITICAL mcp25xxfd_irq_handler(can_controller_t *controller)
         }
         if (events & TEFIF) {               // TEFIF (i.e. TEF event)
             // Dismissal of this event is implicit by emptying the transmit FIFO
-            tx_handler(controller);
+            uint32_t tefsta = read_word_crc(spi_interface, C1TEFSTA);
+            if (tefsta != 0xffffffffU && (tefsta & TEFOVIF)) {
+                tx_fault(controller, CAN_TX_FAULT_TEF);
+            }
+            if (!controller->target_specific.tx_faults) tx_handler(controller);
         }
         if (events & RXIF) {                // RXIF (i.e. received frame into the FIFO)
             // Dismissal of this event is implicit by emptying the receive FIFO
             rx_handler(controller);
         }
         // Dismiss all the explicit handled events
-        enable_controller_interrupts(spi_interface, dismiss);
+        enable_controller_interrupts(spi_interface, dismiss, !controller->target_specific.tx_faults);
     }
 }
 
@@ -1651,6 +1668,11 @@ can_errorcode_t TIME_CRITICAL can_setup_controller(can_controller_t *controller,
     // Record details of the controller
     controller->options = options;
     controller->mode = mode;
+    controller->target_specific.tx_faults = 0;
+    controller->target_specific.tx_recoveries = 0;
+    controller->target_specific.tx_last_faults = 0;
+    controller->target_specific.tx_recovery_phase = 0;
+    controller->target_specific.tx_idle_mismatch_seen = false;
     controller->target_specific.seq_bad = 0;
     controller->target_specific.txqua_bad = 0;
     controller->target_specific.txqsta_bad = 0;
@@ -1682,6 +1704,7 @@ can_errorcode_t TIME_CRITICAL can_send_frame(can_controller_t *controller, const
     // Going to put a frame into the transmit queue or the transmit FIFO
     mcp25xxfd_spi_gpio_disable_irq(spi_interface);
     bool queued = send_frame(controller, frame, fifo);
+    if (queued) controller->target_specific.tx_idle_mismatch_seen = false;
     mcp25xxfd_spi_gpio_enable_irq(spi_interface);
 
     return queued ? CAN_ERC_NO_ERROR : CAN_ERC_NO_ROOM;
@@ -1902,9 +1925,89 @@ void can_stop_controller(can_controller_t *controller)
     // if they are defined within MicroPython)
     init_tx_buffers(controller);
 
+    controller->target_specific.tx_faults = 0;
+    controller->target_specific.tx_recovery_phase = 0;
+    controller->target_specific.tx_idle_mismatch_seen = false;
+
     // Note that for edge-sensitive devices there is a possibility that the
     // CPU still has an edge interrupt pending (because it will not be cleared
     // by the above, since the flag is a latch within the CPU). In this case,
     // there may be a spurious interrupt generated if/when GPIO interrupt is
     // enabled in the future.
+}
+
+
+void can_check_tx_consistency(can_controller_t *controller, bool expected_inflight)
+{
+    can_interface_t *spi = &controller->host_interface;
+    mcp25xxfd_spi_gpio_disable_irq(spi);
+    uint32_t requests = read_word_crc(spi, C1TXREQ);
+    uint32_t tef = read_word_crc(spi, C1TEFSTA);
+    uint32_t trec = read_word_crc(spi, C1TREC);
+    if (trec != 0xffffffffU && (trec & TXBO)) tx_fault(controller, CAN_TX_FAULT_BUS_OFF);
+    if (tef != 0xffffffffU && (tef & TEFOVIF)) tx_fault(controller, CAN_TX_FAULT_TEF);
+    uint32_t valid = 0;
+    for (uint32_t i = 0; i < UREF_HASH_TABLE_SIZE; i++) valid += controller->tx_pri_queue.uref_valid[i] ? 1U : 0U;
+    uint32_t free = controller->tx_pri_queue.num_free_slots;
+    if (free > CAN_HW_TX_QUEUE_SIZE || free + valid != CAN_HW_TX_QUEUE_SIZE)
+        tx_fault(controller, CAN_TX_FAULT_STATE);
+    bool idle_mismatch = requests == 0 && tef != 0xffffffffU && !(tef & TEFNEIF) && (valid || expected_inflight);
+    // TXREQ may clear just before the completion event is posted. Confirm this
+    // condition on a later poll instead of aborting a legitimate completion.
+    if (idle_mismatch && controller->target_specific.tx_idle_mismatch_seen)
+        tx_fault(controller, CAN_TX_FAULT_STATE);
+    controller->target_specific.tx_idle_mismatch_seen = idle_mismatch;
+    enable_controller_interrupts(spi, 0, !controller->target_specific.tx_faults);
+    mcp25xxfd_spi_gpio_enable_irq(spi);
+}
+
+bool can_recover_tx(can_controller_t *controller)
+{
+    can_interface_t *spi = &controller->host_interface;
+    mcp25xxfd_spi_gpio_disable_irq(spi);
+    bool done = false;
+    uint32_t reasons = controller->target_specific.tx_faults;
+    if (!reasons) { done = true; goto out; }
+    uint32_t con = read_word_crc(spi, C1CON);
+    uint32_t trec = read_word_crc(spi, C1TREC);
+    if (con == 0xffffffffU || trec == 0xffffffffU || (trec & TXBO)) goto out;
+    if (controller->target_specific.tx_recovery_phase == 0) {
+        // Abort only TX. RX, filters, timing and the RX software FIFO survive.
+        write_word(spi, C1CON, con | (1U << 27)); // ABAT
+        controller->target_specific.tx_recovery_phase = 1;
+    }
+    if (controller->target_specific.tx_recovery_phase == 1) {
+        if (read_word_crc(spi, C1TXREQ) != 0) goto out;
+        uint32_t txcon = read_word_crc(spi, C1TXQCON);
+        uint32_t tefcon = read_word_crc(spi, C1TEFCON);
+        if (txcon == 0xffffffffU || tefcon == 0xffffffffU) goto out;
+        write_word(spi, C1TXQCON, (txcon & ~(TXREQ | UINC)) | FRESET);
+        write_word(spi, C1TEFCON, (tefcon & ~UINC) | FRESET | TEFNEIE | TEFOVIE);
+        controller->target_specific.tx_recovery_phase = 2;
+    }
+    if (controller->target_specific.tx_recovery_phase == 2) {
+        uint32_t txcon = read_word_crc(spi, C1TXQCON);
+        uint32_t tefcon = read_word_crc(spi, C1TEFCON);
+        if (txcon == 0xffffffffU || tefcon == 0xffffffffU || ((txcon | tefcon) & FRESET)) goto out;
+        write_word(spi, C1TEFSTA, 0); // Clear sticky overflow after reset.
+        uint32_t tef = read_word_crc(spi, C1TEFSTA);
+        uint32_t txsta = read_word_crc(spi, C1TXQSTA);
+        if (tef == 0xffffffffU || (tef & (TEFNEIF | TEFOVIF)) || txsta == 0xffffffffU || !(txsta & TXQNIF) || !(txsta & TXQEIF) || read_word_crc(spi, C1TXREQ) != 0) goto out;
+        init_tx_buffers(controller);
+        con = read_word_crc(spi, C1CON);
+        if (con == 0xffffffffU) goto out;
+        write_word(spi, C1CON, con & ~(1U << 27));
+        uint32_t resumed = read_word_crc(spi, C1CON);
+        if (resumed == 0xffffffffU || (resumed & (1U << 27))) goto out;
+        controller->target_specific.tx_last_faults = reasons;
+        controller->target_specific.tx_recoveries++;
+        controller->target_specific.tx_faults = 0;
+        controller->target_specific.tx_recovery_phase = 0;
+        controller->target_specific.tx_idle_mismatch_seen = false;
+        done = true;
+    }
+out:
+    enable_controller_interrupts(spi, 0, !controller->target_specific.tx_faults);
+    mcp25xxfd_spi_gpio_enable_irq(spi);
+    return done;
 }

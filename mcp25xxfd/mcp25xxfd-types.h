@@ -66,6 +66,11 @@
 
 // Target-specific data types for MCP25xxFD CAN controller
 typedef struct {
+    volatile uint32_t tx_faults;                    // Pending TX resynchronization reasons
+    uint32_t tx_recoveries;                         // Completed TX-only resets
+    uint32_t tx_last_faults;                        // Reasons for most recent reset
+    uint8_t tx_recovery_phase;                      // Bounded foreground reset state machine
+    bool tx_idle_mismatch_seen;                    // Confirm idle mismatch on a later health poll
     uint32_t seq_bad;                               // Number of times the SEQ field was bad
     uint32_t txqua_bad;                             // C1TXQUA read back out of range or otherwise bad
     uint32_t txqsta_bad;                            // C1TXSTA read back showing queue full

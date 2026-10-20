@@ -22,6 +22,8 @@ static bool tx_inflight;
 static volatile uint32_t tx_completed;
 static uint32_t tx_submit_completed;
 static uint32_t tx_accepted, tx_rejected, tx_high_water, tx_retries;
+static uint32_t tx_recoveries, tx_uncertain, tx_last_faults;
+static uint64_t tx_next_attempt_us, tx_next_health_us;
 
 void TIME_CRITICAL can_isr_callback_frame_tx(can_uref_t uref, uint32_t timestamp) {
     (void)uref;
@@ -32,36 +34,70 @@ void TIME_CRITICAL can_isr_callback_frame_tx(can_uref_t uref, uint32_t timestamp
 static void tx_buffer_clear(void) {
     tx_head = tx_tail = tx_count = 0;
     tx_inflight = false;
+    tx_next_attempt_us = tx_next_health_us = 0;
 }
 
 // Keep the head until its completion event. One hardware frame at a time also
 // prevents the hardware priority queue from reordering equal-ID FIFO frames.
 static void TIME_CRITICAL pico_slcan_tx_service(void) {
     if (!mController_started) return;
-    if (tx_inflight) {
-        if (tx_completed == tx_submit_completed) return;
+    critical_section_enter_blocking(&can_rx_lock);
+    // Completion and fault snapshots must be atomic with the ISR. A positively
+    // completed head is removed before recovery; an unconfirmed head is retained.
+    if (tx_inflight && tx_completed != tx_submit_completed) {
         if (++tx_head == SLCAN_TX_BUFFER_SIZE) tx_head = 0;
         tx_count--;
         tx_inflight = false;
     }
-    if (tx_count == 0) return;
+    if (!tx_count && !mController.target_specific.tx_faults) goto out;
+    uint64_t now = time_us_64();
+    if (mController.target_specific.tx_faults) {
+        if (now < tx_next_attempt_us) goto out;
+        uint32_t reasons = mController.target_specific.tx_faults;
+        tx_next_attempt_us = now + 1000U;
+        if (!can_recover_tx(&mController)) goto out;
+        tx_recoveries++;
+        tx_last_faults = reasons;
+        if (tx_inflight) tx_uncertain++;
+        // At-least-once: a lost completion may already have reached the peer.
+        // Keep the FIFO head and retry it instead of silently dropping it.
+        tx_inflight = false;
+    }
+    if (tx_inflight) {
+        if (now >= tx_next_health_us) {
+            tx_next_health_us = now + 10000U;
+            // This does not time out an ACK wait. TXREQ still set is legitimate.
+            can_check_tx_consistency(&mController, tx_inflight);
+        }
+        goto out;
+    }
+    if (!tx_count || now < tx_next_attempt_us) goto out;
     tx_submit_completed = tx_completed;
     can_errorcode_t rc = can_send_frame(&mController, &tx_buffer[tx_head], false);
     if (rc == CAN_ERC_NO_ERROR) {
         tx_inflight = true;
+        tx_next_health_us = now + 10000U;
     } else {
-        // Retain the head and retry from the foreground loop, never from ISR.
         tx_retries++;
+        tx_next_attempt_us = now + 1000U;
+        if (now >= tx_next_health_us) {
+            tx_next_health_us = now + 10000U;
+            can_check_tx_consistency(&mController, tx_inflight);
+        }
     }
+out:
+    critical_section_exit(&can_rx_lock);
 }
 
 // Status extension; counts include the in-flight head.
 void pico_slcan_tx_buffer_status(void) {
     pico_slcan_tx_service();
-    printf("W accepted=%lu rejected=%lu completed=%lu queued=%lu capacity=%u high_water=%lu retries=%lu inflight=%u\r",
+    printf("W accepted=%lu rejected=%lu completed=%lu queued=%lu capacity=%u high_water=%lu retries=%lu inflight=%u recoveries=%lu uncertain=%lu faults=%lu pending=%lu\r",
         (unsigned long)tx_accepted, (unsigned long)tx_rejected,
         (unsigned long)tx_completed, (unsigned long)tx_count, SLCAN_TX_BUFFER_SIZE,
-        (unsigned long)tx_high_water, (unsigned long)tx_retries, tx_inflight ? 1U : 0U);
+        (unsigned long)tx_high_water, (unsigned long)tx_retries, tx_inflight ? 1U : 0U,
+        (unsigned long)tx_recoveries, (unsigned long)tx_uncertain,
+        (unsigned long)tx_last_faults, (unsigned long)mController.target_specific.tx_faults);
 }
 
 ssd1306_t mDisp;

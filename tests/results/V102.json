@@ -1,0 +1,146 @@
+{
+  "version": "V102 candidate (unreleased)",
+  "software_version": "03",
+  "date": "2026-10-19",
+  "uf2": "pico-slcan-V102-candidate.uf2",
+  "uf2_sha256": "fbdb2ea3e22abb415bb7e49c27e2fceb880bb472bd11031db3d8e3e70b036d5a",
+  "delivery_semantics": "retain unconfirmed FIFO head and retry; duplicate delivery possible after lost completion",
+  "fault_injection": [
+    {
+      "mode": "busoff",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 200,
+      "physical_duplicates_observed": 0,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": null
+    },
+    {
+      "mode": "f",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 1000,
+      "physical_duplicates_observed": 0,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": null
+    },
+    {
+      "mode": "noack",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 1000,
+      "physical_duplicates_observed": 0,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": 0
+    },
+    {
+      "mode": "o",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 1000,
+      "physical_duplicates_observed": 0,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": null
+    },
+    {
+      "mode": "s",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 1000,
+      "physical_duplicates_observed": 10,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": null
+    },
+    {
+      "mode": "v",
+      "runs": 10,
+      "passed": 10,
+      "accepted_payloads_delivered": 1000,
+      "physical_duplicates_observed": 0,
+      "final_free_slots": 20,
+      "final_valid_references": 0,
+      "final_tef_empty_no_overflow": true,
+      "false_recoveries": null
+    }
+  ],
+  "candidate_busoff": {
+    "runs": 10,
+    "passed": 10,
+    "classic_payloads_delivered": 200,
+    "without_close_open": true
+  },
+  "edges": [
+    {
+      "mode": "full_state",
+      "passed": true,
+      "unique_transmitted": 1000,
+      "physical_duplicates": 0,
+      "rx_count": null,
+      "rx_exact": null
+    },
+    {
+      "mode": "full_tef",
+      "passed": true,
+      "unique_transmitted": 1000,
+      "physical_duplicates": 1,
+      "rx_count": null,
+      "rx_exact": null
+    },
+    {
+      "mode": "duplex_seq",
+      "passed": true,
+      "unique_transmitted": 1000,
+      "physical_duplicates": 1,
+      "rx_count": 1001,
+      "rx_exact": true
+    }
+  ],
+  "normal_rx": {
+    "patterns": 52,
+    "passed": true
+  },
+  "duplex": {
+    "per_direction": 1000,
+    "rx_tx_exact_order": true
+  },
+  "burst": {
+    "classic_bitrate": 125000,
+    "accepted_received": 1000,
+    "exact_order": true
+  },
+  "ack_stopped_full": {
+    "attempted": 1100,
+    "accepted": 1000,
+    "bel": 100,
+    "resumed_in_order": 1000,
+    "false_recoveries": 0
+  },
+  "opcode_compatibility": {
+    "closed_rejected": 8,
+    "open_accepted": 8
+  },
+  "final_state": {
+    "firmware": "V0103",
+    "can_closed": true,
+    "target_and_other_can_interfaces_down": true,
+    "pi_rebooted": false
+  },
+  "publication": {
+    "version": "V102",
+    "date": "2026-10-20",
+    "approved_by_user": true,
+    "continuous_24h_completed": false,
+    "endurance_status": "stopped_by_user",
+    "firmware_sha256": "f073740c23d2c449a529bcc27037a8723530d11662f99891fa866a034044cf85"
+  }
+}

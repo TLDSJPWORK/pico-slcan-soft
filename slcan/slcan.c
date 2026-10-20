@@ -559,23 +559,24 @@ void pars_slcancmd(char *buf)
 void TIME_CRITICAL transfer_tty2can() {
     static char cmdbuf[MAX_CMD_LEN];
     static int cmdidx = 0;
+    char input[64];
+    int count;
 
-    // 非ブロッキングで1文字取得
-    int val = getchar_timeout_us(0);
-    while (val != PICO_ERROR_TIMEOUT) {
-        cmdbuf[cmdidx++] = (char)val;
+    // Read available USB data in chunks. Keep partial SLCAN commands between calls.
+    while ((count = stdio_get_until(input, sizeof(input), make_timeout_time_us(0))) > 0) {
+        for (int i = 0; i < count; ++i) {
+            char val = input[i];
+            cmdbuf[cmdidx++] = val;
 
-        if (cmdidx == MAX_CMD_LEN) {
-            slcan_nack();      // バッファオーバーフロー
-            cmdidx = 0;
-        } else if (val == '\r') {
-            cmdbuf[cmdidx] = '\0'; // 終端
-            pars_slcancmd(cmdbuf); // SLCANコマンド解析
-            cmdidx = 0;
+            if (cmdidx == MAX_CMD_LEN) {
+                slcan_nack();
+                cmdidx = 0;
+            } else if (val == '\r') {
+                cmdbuf[cmdidx] = '\0';
+                pars_slcancmd(cmdbuf);
+                cmdidx = 0;
+            }
         }
-
-        // 次の文字を取得
-        val = getchar_timeout_us(0);
     }
 } // transfer_tty2can()
 

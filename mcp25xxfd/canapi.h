@@ -451,6 +451,18 @@ can_errorcode_t can_setup_controller(can_controller_t *controller,
 /// @brief Stop the CAN controller operating
 void can_stop_controller(can_controller_t *controller);
 
+#define CAN_TX_FAULT_BUS_OFF (1U << 0)
+#define CAN_TX_FAULT_SEQ     (1U << 1)
+#define CAN_TX_FAULT_TEF     (1U << 2)
+#define CAN_TX_FAULT_STATE   (1U << 3)
+
+// Foreground, non-reentrant. Poll only when TX is overdue or submission fails.
+// An idle hardware queue must have no outstanding software references.
+void can_check_tx_consistency(can_controller_t *controller, bool expected_inflight);
+// Bounded TX-only recovery. False means hardware abort/reset is still pending.
+// Caller retains application frames; delivery of discarded events is uncertain.
+bool can_recover_tx(can_controller_t *controller);
+
 /// @brief Get the bitmask of options used to initialize the CAN controller
 INLINE uint16_t can_controller_get_options(const can_controller_t *controller)
 {
