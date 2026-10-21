@@ -1,0 +1,139 @@
+{
+  "firmware": "V102 / software 03",
+  "firmware_sha256": "f073740c23d2c449a529bcc27037a8723530d11662f99891fa866a034044cf85",
+  "date": "2026-10-21",
+  "status": "cumulative_24h_passed",
+  "conditions": {
+    "nominal_bitrate": 500000,
+    "data_bitrate": 2000000,
+    "standard_ids": [
+      "0x621",
+      "0x622"
+    ],
+    "fd_payload_bytes": 64,
+    "brs": true,
+    "rate_tx_fps": 730,
+    "rate_rx_fps": 730,
+    "bus_load_model_percent": 50.0065,
+    "waveform_load_measured": false,
+    "pi_rx_usecs_irq": 0,
+    "pi_rx_frames_irq": 1,
+    "threaded_napi": false
+  },
+  "cumulative_seconds": 86400.10549775,
+  "longest_continuous_seconds": 81030,
+  "confirmed_tx_frames": 63072078,
+  "confirmed_rx_frames": 63072048,
+  "continuous_24h_passed": false,
+  "segments": [
+    {
+      "segment": "endurance-symmetric-fd50",
+      "credited_seconds": 5370.10549775,
+      "confirmed_tx_frames": 3920178,
+      "confirmed_rx_frames": 3920148,
+      "final_tail_verified": false,
+      "evidence": "last_validated_checkpoint"
+    },
+    {
+      "segment": "endurance-cumulative-20261020-01",
+      "credited_seconds": 81030,
+      "confirmed_tx_frames": 59151900,
+      "confirmed_rx_frames": 59151900,
+      "final_tail_verified": true,
+      "evidence": "completed_segment_full_drain_and_count_audit"
+    }
+  ],
+  "completed_segment": {
+    "started_utc": "2026-10-20T03:40:22Z",
+    "completed_utc": "2026-10-21T02:10:56Z",
+    "production_seconds": 81030,
+    "elapsed_including_tail_seconds": 81033.52874883401,
+    "frames_per_direction": 59151900,
+    "pass": true,
+    "bad": 0,
+    "bels": 0,
+    "peer": {
+      "sent": 59151900,
+      "received": 59151900,
+      "bad": 0,
+      "last": 59151899,
+      "send_errors": 0,
+      "drops": 0,
+      "elapsed": 81032.829493458,
+      "kernel_rx_errors": {
+        "rx_errors": 0,
+        "rx_dropped": 0,
+        "rx_fifo_errors": 0,
+        "rx_missed_errors": 0,
+        "rx_over_errors": 0
+      }
+    },
+    "baseline": {
+      "accepted": 0,
+      "rejected": 0,
+      "completed": 0,
+      "queued": 0,
+      "capacity": 1000,
+      "high_water": 0,
+      "retries": 0,
+      "inflight": 0,
+      "recoveries": 0,
+      "uncertain": 0,
+      "faults": 0,
+      "pending": 0
+    },
+    "final_queue": {
+      "accepted": 59151900,
+      "rejected": 0,
+      "completed": 59151900,
+      "queued": 0,
+      "capacity": 1000,
+      "high_water": 288,
+      "retries": 0,
+      "inflight": 0,
+      "recoveries": 0,
+      "uncertain": 0,
+      "faults": 0,
+      "pending": 0
+    }
+  },
+  "independent_audit": {
+    "passed": true,
+    "cumulative_seconds": 86400.10549775,
+    "longest_continuous_seconds": 81030,
+    "confirmed_tx_frames": 63072078,
+    "confirmed_rx_frames": 63072048,
+    "completed_segment_frames_per_direction": 59151900,
+    "checkpoint_count": 2700,
+    "last_checkpoint_seconds": 81001.60716583401,
+    "maximum_producer_lag_frames": 9,
+    "monitored_errors": 0,
+    "unplanned_recoveries": 0,
+    "final_queue": {
+      "accepted": 59151900,
+      "rejected": 0,
+      "completed": 59151900,
+      "queued": 0,
+      "capacity": 1000,
+      "high_water": 288,
+      "retries": 0,
+      "inflight": 0,
+      "recoveries": 0,
+      "uncertain": 0,
+      "faults": 0,
+      "pending": 0
+    },
+    "pi_boot_id_unchanged": true,
+    "target_restored": true,
+    "receive_settings_restored": true,
+    "system_receive_buffer_unchanged": true,
+    "firmware_and_runtime_hashes_match": true,
+    "continuous_24h_passed": false
+  },
+  "accounting_note": "The interrupted segment contributes only its validated checkpoint and confirmed counts; its final tail was not verified. The completed segment was fully drained and reconciled. Counts from different checkpoints are not simultaneous.",
+  "evidence_sha256": {
+    "soak.json": "6ccd517046f2259032d31cf528c1255476b566fad6a3e457d5bfeaf54c0ee448",
+    "soak-progress.json": "4deeeb90f8116e4b03474bddba09165534f32afa09d4949e1f2d584a771c93c4",
+    "runner-result.json": "750bce70441d3b472d2647dd28336002028329e3570397d4eb4063cacad9f049"
+  }
+}

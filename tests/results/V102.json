@@ -142,5 +142,6 @@
     "continuous_24h_completed": false,
     "endurance_status": "stopped_by_user",
     "firmware_sha256": "f073740c23d2c449a529bcc27037a8723530d11662f99891fa866a034044cf85"
-  }
+  },
+  "latest_cumulative_endurance_result": "V102-endurance-cumulative.json"
 }
